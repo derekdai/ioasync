@@ -1,21 +1,10 @@
 #include <ucontext.h>
-#include <stdlib.h>
 #include <stdio.h>
-#include <assert.h>
+#include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-
-typedef void (*CoroEntry)();
-
-typedef enum _CoroStatus CoroStatus;
-
-enum _CoroStatus {
-  CORO_STATUS_INIT = 0,
-  CORO_STATUS_STARTED,
-  CORO_STATUS_DEAD,
-};
-
-typedef struct _Coro Coro;
+#include <assert.h>
+#include "coro.h"
 
 struct _Coro {
   ucontext_t ctx;
@@ -24,17 +13,26 @@ struct _Coro {
   CoroEntry entry;
 };
 
-static Coro *root = &(Coro) { };
+static Coro *root = &(Coro) {
+  .name = "main",
+  .status = CORO_STATUS_INIT
+};
 
 static Coro *curr = NULL;
 
-#define coro_init() {                       \
-  root->name = "main";                      \
-  root->status = CORO_STATUS_STARTED;       \
-  curr = root;                              \
+void coro_init() {
+  root->status = CORO_STATUS_STARTED;
+  curr = root;
+}
+
+Coro *coro_root() {
+  return root;
 }
 
 Coro *coro_new(const char *name, int stackSize) {
+  assert(curr != NULL);
+  assert(name != NULL);
+
   Coro *self = calloc(1, sizeof(Coro));
   self->name = strdup(name);
   self->status = CORO_STATUS_INIT;
@@ -56,7 +54,7 @@ Coro *coro_self() {
   return curr;
 }
 
-void _coro_entry() {
+static void _coro_entry() {
   Coro *self = curr;
   self->entry();
   self->status = CORO_STATUS_DEAD;
@@ -77,6 +75,10 @@ void coro_to(Coro *target) {
   curr = self;
 }
 
+void coro_to_root() {
+  coro_to(root);
+}
+
 void coro_start(Coro *self, CoroEntry entry) {
   assert(self);
   assert(entry);
@@ -90,26 +92,4 @@ void coro_start(Coro *self, CoroEntry entry) {
 
   self->status = CORO_STATUS_STARTED;
   coro_to(self);
-}
-
-void myfunc() {
-  printf("myfunc: start\n");
-  coro_to(root);
-  printf("myfunc: end\n");
-}
-
-int main() {
-  coro_init();
-
-  Coro *coro1 = coro_new("coro1", 4096);
-
-  printf("main: hello\n");
-  coro_start(coro1, myfunc);
-  
-  printf("main: hello2\n");
-  coro_to(coro1);
-
-  printf("main: bye\n");
-
-  return 0;
 }
