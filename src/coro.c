@@ -99,8 +99,6 @@ void coro_set_default_stack_size(int stack_size) {
 
 void coro_init() {
   sche->curr = sche->root;
-  sche->curr->status = CORO_STATUS_STARTED;
-  getcontext(UCTX(sche->root));
 }
 
 Coro *coro_new(const char *name, CoroEntry entry, int data_size) {
@@ -114,7 +112,7 @@ Coro *coro_new(const char *name, CoroEntry entry, int data_size) {
   UCTX(self)->uc_stack.ss_size = sche->stack_size;
   UCTX(self)->uc_link = UCTX(coro_root());
   getcontext(UCTX(self));
-  makecontext(UCTX(self), (void (*)()) entry, 1, self);
+  makecontext(UCTX(self), (void (*)()) entry, 0);
 
   coro_add(self);
 
@@ -134,8 +132,17 @@ Coro *coro_self() {
   return sche->curr;
 }
 
-int coro_switch_name(const char *name) {
-  Coro *c = coro_find(name);
+int coro_switch_with_name(const char *name) {
+  Coro *c;
+  if(!strcmp("root", name)) {
+    c = sche->root;
+  } else {
+    c = coro_find(name);
+    if(!c) {
+      errno = ENOENT;
+      return -1;
+    }
+  }
   return coro_switch(c);
 }
 
@@ -145,9 +152,12 @@ void coro_yield() {
 
 int coro_switch(Coro *target) {
   assert(target);
-  assert(target->status == CORO_STATUS_INIT);
+  assert(target->status != CORO_STATUS_DEAD);
 
   Coro *self = sche->curr;
+
+  printf("  %s>%s\n", self->name, target->name);
+
   sche->curr = target;
   target->status = CORO_STATUS_STARTED;
   if(swapcontext(UCTX(self), UCTX(target)) == -1) {
@@ -156,7 +166,7 @@ int coro_switch(Coro *target) {
     return -1;
   }
 
-  printf("  to %s\n", self->name);    
+  printf("  %s<\n", self->name);
   sche->curr = self;
 
   return 0;
