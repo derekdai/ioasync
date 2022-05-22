@@ -17,15 +17,17 @@ void coro_init();
 
 Coro *coro_root();
 
+const char *coro_name();
+
 Coro *coro_new(const char *name, int stackSize);
 
 void coro_free(Coro *self);
 
 Coro *coro_self();
 
-void coro_to(Coro *target);
+void coro_switch(Coro *target);
 
-void coro_to_root();
+void coro_yield();
 
 void coro_start(Coro *self, CoroEntry entry);
 

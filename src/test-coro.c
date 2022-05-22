@@ -6,10 +6,20 @@
 #include <errno.h>
 #include "coro.h"
 
+void myfunc2() {
+  printf("myfunc2: start\n");
+  coro_yield();
+  printf("myfunc2: end\n");
+}
+
 void myfunc() {
   printf("myfunc: start\n");
-  coro_to_root();
+  Coro *coro2 = coro_new("coro2", 4096);
+  coro_start(coro2, myfunc2);
+  printf("myfunc: go myfunc2 again\n");
+  coro_switch(coro2);
   printf("myfunc: end\n");
+  coro_free(coro2);
 }
 
 int main() {
@@ -21,9 +31,11 @@ int main() {
   coro_start(coro1, myfunc);
   
   printf("main: hello2\n");
-  coro_to(coro1);
+  coro_switch(coro1);
 
   printf("main: bye\n");
+
+  coro_free(coro1);
 
   return 0;
 }
