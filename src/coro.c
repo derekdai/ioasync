@@ -7,6 +7,9 @@
 #include <threads.h>
 #include "coro.h"
 
+#define log(fmt, ...) fprintf(stderr, "\e[2;34m" fmt "\e[0m\n", __VA_ARGS__)
+#define debug(fmt, ...) log(" D" fmt, __VA_ARGS__)
+
 #define STACK_SIZE (4096)
 #define CORO(p) ((Coro *)(p))
 #define UCTX(p) ((struct ucontext_t *)(p))
@@ -17,19 +20,38 @@ enum CoroPrioroty {
   CORO_PRIO_LOWEST = 63,
 };
 
+/**
+ * 設計為
+ * - doubld-linked list
+ * - 單向 traverse
+ * - 盡可能源少 pointer 的操作量
+ *
+ * - 因為有 root, `num_coros` 至少為 1, 所以 `head` 不可能是 NULL
+ * - curr 指向 head
+ *   - curr 為目前運行中 coro
+ * - head 的 `prev` 為 tail
+ * - tail 的 `next` 為 head
+ *
+ * - 下個要執行的 coro 為 `curr->next`
+ *   - 所以 add 時串在 `curr->next` 位置
+ *
+ * - curr 執行後, 移到 `curr->next`, 也就是目前的 curr 成為了 tail
+ * 
+ * - 如果用 switch 切換至指定 coro, 要先將它從 list 中移除, 然後取代
+ *   curr, 這樣執行完後就自動成為 tail
+ */
 struct _CoroSche {
   int stack_size;
   Coro *root;
+  int num_coros;
   Coro *curr;
-  int num_child;
-  Coro *children;
 };
 
 struct _Coro {
   ucontext_t ctx;
   char *name;
   CoroStatus status;
-  CoroEntry entry;
+  Coro *prev;
   Coro *next;
 };
 
@@ -39,18 +61,57 @@ thread_local CoroSche *sche = &(CoroSche) {
     .name = "root",
     .status = CORO_STATUS_INIT,
   },
+  .num_coros = 0,
   .curr = NULL,
-  .num_child = 0,
-  .children = NULL,
 };
+
+void coro_set_default_stack_size(int stack_size) {
+  assert(stack_size >= STACK_SIZE);
+
+  sche->stack_size = stack_size;
+}
+
+static Coro *coro_head() {
+  return sche->curr;
+}
+
+static Coro *coro_tail() {
+  return coro_head()->prev;
+}
+
+static Coro *coro_root() {
+  return sche->root;
+}
+
+const char *coro_name(Coro *coro) {
+  return coro->name;
+}
+
+Coro *coro_self() {
+  return coro_head();
+}
+
+CoroStatus coro_status(Coro *coro) {
+  return coro->status;
+}
+
+/**
+ * 此時 list 為 empty, 特殊處理, 在 `coro_add()` 中就不需要判斷 `head` 為 NULL 的情況了
+ */
+void coro_init() {
+  sche->num_coros = 1;
+  sche->curr = coro_root();
+  coro_head()->prev = coro_head();
+  coro_head()->next = coro_head();
+}
 
 Coro *coro_find(const char *name) {
   if(!strcmp("root", name)) {
     return coro_root();
   }
 
-  Coro *c = sche->children;
-  while(c != NULL) {
+  Coro *c = coro_head();
+  while(c != coro_tail()) {
     if(!strcmp(name, c->name)) {
       return c;
     }
@@ -60,49 +121,42 @@ Coro *coro_find(const char *name) {
   return NULL;
 }
 
-void coro_add(Coro *coro) {
-  coro->next = sche->children;
-  sche->children = coro;
-  ++ sche->num_child;
+static void coro_add(Coro *coro) {
+  coro->next = coro_head()->next;
+  coro_head()->next->prev = coro;
+
+  coro->prev = coro_head();
+  coro_head()->next = coro;
+
+  ++ sche->num_coros;
 }
 
-void coro_del(Coro *coro) {
-  Coro *p = sche->children;
-  if(p == coro) {
-    sche->children = coro->next;
-    -- sche->num_child;
+/**
+ * `curr` 的操作由 caller 完成
+ */
+static void coro_remove(Coro *coro) {
+  if(coro->prev) {
+    coro->prev->next = coro->next;
+  }
+
+  if(coro->next) {
+    coro->next->prev = coro->prev;
+  }
+}
+
+static void coro_set_head(Coro *coro) {
+  if(coro == coro_head()) {
     return;
+  } else  if(coro != coro_head()->next) {
+    coro_remove(coro);
+    coro_add(coro);
   }
-  while(p) {
-    if(p->next == coro) {
-      p->next = coro->next;
-      -- sche->num_child;
-      break;
-    }
-    p = p->next;
-  }
-}
 
-Coro *coro_root() {
-  return sche->root;
-}
-
-const char *coro_name() {
-  return coro_self()->name;
-}
-
-void coro_set_default_stack_size(int stack_size) {
-  assert(stack_size >= STACK_SIZE);
-
-  sche->stack_size = stack_size;
-}
-
-void coro_init() {
-  sche->curr = sche->root;
+  sche->curr = sche->curr->next;
 }
 
 Coro *coro_new(const char *name, CoroEntry entry, int data_size) {
-  assert(coro_self() != NULL);
+  assert(coro_root() != NULL);
   assert(name != NULL);
 
   Coro *self = malloc(sizeof(Coro) + data_size);
@@ -112,7 +166,7 @@ Coro *coro_new(const char *name, CoroEntry entry, int data_size) {
   UCTX(self)->uc_stack.ss_size = sche->stack_size;
   UCTX(self)->uc_link = UCTX(coro_root());
   getcontext(UCTX(self));
-  makecontext(UCTX(self), (void (*)()) entry, 0);
+  makecontext(UCTX(self), (void (*)()) entry, 1, self);
 
   coro_add(self);
 
@@ -121,15 +175,12 @@ Coro *coro_new(const char *name, CoroEntry entry, int data_size) {
 
 void coro_free(Coro *self) {
   assert(self);
+  assert(self != coro_head());
   assert(self->status == CORO_STATUS_INIT || self->status == CORO_STATUS_DEAD);
 
   free(self->name);
   free(self->ctx.uc_stack.ss_sp);
   free(self);
-}
-
-Coro *coro_self() {
-  return sche->curr;
 }
 
 int coro_switch_with_name(const char *name) {
@@ -143,31 +194,36 @@ int coro_switch_with_name(const char *name) {
       return -1;
     }
   }
-  return coro_switch(c);
+
+  coro_switch(c);
+
+  return 0;
 }
 
-void coro_yield() {
-  coro_switch(coro_root());
-}
-
-int coro_switch(Coro *target) {
+void coro_switch(Coro *target) {
   assert(target);
   assert(target->status != CORO_STATUS_DEAD);
 
-  Coro *self = sche->curr;
+  Coro *self = coro_head();
 
-  printf("  %s>%s\n", self->name, target->name);
+  //debug("  %s>%s\n", self->name, target->name);
 
-  sche->curr = target;
+  coro_set_head(target);
   target->status = CORO_STATUS_STARTED;
-  if(swapcontext(UCTX(self), UCTX(target)) == -1) {
-    target->status = CORO_STATUS_INIT;
-    sche->curr = self;
-    return -1;
+  swapcontext(UCTX(self), UCTX(target));
+
+  //debug("  %s<\n", self->name);
+  coro_set_head(self);
+}
+
+void coro_sche() {
+  if(sche->num_coros == 1) {
+    return;
   }
 
-  printf("  %s<\n", self->name);
-  sche->curr = self;
+  coro_switch(sche->curr->next);
+}
 
-  return 0;
+void coro_yield() {
+  coro_sche();
 }

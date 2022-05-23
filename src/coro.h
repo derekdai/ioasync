@@ -7,7 +7,7 @@ typedef struct _CoroSche CoroSche;
 
 typedef struct _Coro Coro;
 
-typedef void (*CoroEntry)();
+typedef void (*CoroEntry)(Coro *coro);
 
 enum _CoroStatus {
   CORO_STATUS_INIT = 0,
@@ -19,9 +19,9 @@ typedef enum _CoroStatus CoroStatus;
 
 void coro_init();
 
-Coro *coro_root();
+const char *coro_name(Coro *coro);
 
-const char *coro_name();
+CoroStatus coro_status(Coro *coro);
 
 Coro *coro_new(const char *name, CoroEntry entry, int data_size);
 
@@ -29,12 +29,14 @@ void coro_free(Coro *self);
 
 Coro *coro_self();
 
-int coro_switch(Coro *target);
+void coro_switch(Coro *target);
 
 int coro_switch_with_name(const char *name);
 
 void coro_yield();
 
 void coro_start(Coro *self, CoroEntry entry);
+
+void coro_set_default_stack_size(int stack_size);
 
 #endif /* _CORO_H_ */

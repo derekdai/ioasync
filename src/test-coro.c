@@ -6,10 +6,11 @@
 #include <errno.h>
 #include "coro.h"
 
-void myfunc() {
-  printf("myfunc: 2\n");
-  coro_switch_with_name("root");
-  printf("myfunc: 4\n");
+void myfunc(Coro *coro) {
+  printf("%s: 2\n", coro_name(coro));
+  coro_yield();
+  printf("%s: 4\n", coro_name(coro));
+  coro_yield();
 }
 
 int main() {
@@ -18,9 +19,9 @@ int main() {
   coro_new("coro1", myfunc, 0);
 
   printf("main: 1\n");
-  coro_switch_with_name("coro1");
+  coro_yield();
   printf("main: 3\n");
-  coro_switch_with_name("coro1");
+  coro_yield();
   printf("main: 5\n");
 
   return 0;
