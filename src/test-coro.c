@@ -6,11 +6,12 @@
 #include <errno.h>
 #include "coro.h"
 
-void myfunc(Coro *coro) {
-  printf("%s: 2\n", coro_name(coro));
-  coro_yield();
-  printf("%s: 4\n", coro_name(coro));
-  coro_yield();
+int count = 5000000;
+
+void myfunc() {
+  while(count) {
+    coro_yield();
+  }
 }
 
 int main() {
@@ -18,11 +19,10 @@ int main() {
 
   coro_new("coro1", myfunc, 0);
 
-  printf("main: 1\n");
-  coro_yield();
-  printf("main: 3\n");
-  coro_yield();
-  printf("main: 5\n");
+  while(count) {
+    coro_yield();
+    -- count;
+  }
 
   return 0;
 }

@@ -71,27 +71,27 @@ void coro_set_default_stack_size(int stack_size) {
   sche->stack_size = stack_size;
 }
 
-static Coro *coro_head() {
+static inline Coro *coro_head() {
   return sche->curr;
 }
 
-static Coro *coro_tail() {
+static inline Coro *coro_tail() {
   return coro_head()->prev;
 }
 
-static Coro *coro_root() {
+static inline Coro *coro_root() {
   return sche->root;
 }
 
-const char *coro_name(Coro *coro) {
+inline const char *coro_name(Coro *coro) {
   return coro->name;
 }
 
-Coro *coro_self() {
+inline Coro *coro_self() {
   return coro_head();
 }
 
-CoroStatus coro_status(Coro *coro) {
+inline CoroStatus coro_status(Coro *coro) {
   return coro->status;
 }
 
