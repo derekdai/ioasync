@@ -204,7 +204,7 @@ void coro_switch(Coro *target) {
 
   Coro *self = coro_head();
 
-  debug("  %s>%s", self->name, target->name);
+  debug("%s>%s", self->name, target->name);
 
   coro_set_head(target);
   target->status = CORO_STATUS_STARTED;
@@ -213,7 +213,7 @@ void coro_switch(Coro *target) {
     return;
   }
 
-  debug("  %s<", self->name);
+  debug("%s<", self->name);
   coro_set_head(self);
 }
 

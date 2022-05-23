@@ -3,18 +3,66 @@
 #ifndef _LOGGING_H_
 #define _LOGGING_H_
 
-#define log(fmt, ...) printf("\e[2;34m" fmt "\e[0m\n", __VA_ARGS__)
-#define trace(fmt, ...) log(" T " fmt, __VA_ARGS__)
-#define debug(fmt, ...) log(" D " fmt, __VA_ARGS__)
-#define info(fmt, ...) log(" I " fmt, __VA_ARGS__)
-#define warn(fmt, ...) log(" W " fmt, __VA_ARGS__)
+#ifndef LEVEL
+#define LEVEL INFO
+#endif
+
+#define FATAL 0
+#define ERROR 1
+#define WARN  2
+#define INFO  3
+#define DEBUG 4
+#define TRACE 5
+
+#define TRACE_STYLE "\e[30mT\e[90m"
+#define DEBUG_STYLE "\e[34mD\e[90m"
+#define INFO_STYLE  "\e[32mI\e[90m"
+#define WARN_STYLE  "\e[33mW\e[90m"
+#define ERROR_STYLE "\e[91mE\e[90m"
+#define FATAL_STYLE "\e[93;41mF\e[90m"
+
+#define log(prx, fmt, sfx, ...) printf(prx " %s:%d %s() " fmt sfx "\n", __FILE__, __LINE__, __func__, __VA_ARGS__)
+
+#if LEVEL <= TRACE
+#define trace(fmt, ...) log(TRACE_STYLE, fmt, "\e[0m", __VA_ARGS__)
+#else
+#define trace(fmt, ...)
+#endif
+
+#if LEVEL <= DEBUG
+#define debug(fmt, ...) log(DEBUG_STYLE, fmt, "\e[0m", __VA_ARGS__)
+#else
+#define debug(fmt, ...)
+#endif
+
+#if LEVEL <= INFO
+#define info(fmt, ...) log(INFO_STYLE, fmt, "\e[0m", __VA_ARGS__)
+#else
+#define info(fmt, ...)
+#endif
+
+#if LEVEL <= WARN
+#define warn(fmt, ...) log(WARN_STYLE, fmt, "\e[0m", __VA_ARGS__)
+#else
+#define warn(fmt, ...)
+#endif
+
+#if LEVEL <= ERROR
 #define error(fmt, ...) {       \
-  log(" E " fmt, __VA_ARGS__);  \
+  log(ERROR_STYLE, fmt, "\e[0m", __VA_ARGS__);  \
   exit(1);                      \
 }
+#else
+#define error(fmt, ...)
+#endif
+
+#if LEVEL <= FATAL
 #define fatal(fmt, ...) {       \
-  log(" F " fmt, __VA_ARGS__);  \
+  log(FATAL_STYLE, fmt, "\e[0m", __VA_ARGS__);  \
   abort();                      \
 }
+#else
+#define fatal(fmt, ...)
+#endif
 
 #endif /* _LOGGING_H_ */
