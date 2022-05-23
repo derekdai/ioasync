@@ -5,10 +5,8 @@
 #include <errno.h>
 #include <assert.h>
 #include <threads.h>
+#include "logging.h"
 #include "coro.h"
-
-#define log(fmt, ...) fprintf(stderr, "\e[2;34m" fmt "\e[0m\n", __VA_ARGS__)
-#define debug(fmt, ...) log(" D" fmt, __VA_ARGS__)
 
 #define STACK_SIZE (4096)
 #define CORO(p) ((Coro *)(p))
@@ -166,7 +164,7 @@ Coro *coro_new(const char *name, CoroEntry entry, int data_size) {
   UCTX(self)->uc_stack.ss_size = sche->stack_size;
   UCTX(self)->uc_link = UCTX(coro_root());
   getcontext(UCTX(self));
-  makecontext(UCTX(self), (void (*)()) entry, 1, self);
+  makecontext(UCTX(self), (void (*)()) entry, 0);
 
   coro_add(self);
 
@@ -206,18 +204,21 @@ void coro_switch(Coro *target) {
 
   Coro *self = coro_head();
 
-  //debug("  %s>%s\n", self->name, target->name);
+  debug("  %s>%s", self->name, target->name);
 
   coro_set_head(target);
   target->status = CORO_STATUS_STARTED;
-  swapcontext(UCTX(self), UCTX(target));
+  if(swapcontext(UCTX(self), UCTX(target)) == -1) {
+    warn("unable switch context: %s", strerror(errno));
+    return;
+  }
 
-  //debug("  %s<\n", self->name);
+  debug("  %s<", self->name);
   coro_set_head(self);
 }
 
 void coro_sche() {
-  if(sche->num_coros == 1) {
+  if(sche->num_coros == 1 && coro_self() == coro_root()) {
     return;
   }
 

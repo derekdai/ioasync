@@ -1,13 +1,13 @@
 #ifndef _CORO_H_
 #define _CORO_H_
 
-#define CORO_ENTRY(p) ((CoroEntry *)(p))
+#define CORO_ENTRY(p) ((CoroEntry)(p))
 
 typedef struct _CoroSche CoroSche;
 
 typedef struct _Coro Coro;
 
-typedef void (*CoroEntry)(Coro *coro);
+typedef void (*CoroEntry)();
 
 enum _CoroStatus {
   CORO_STATUS_INIT = 0,
