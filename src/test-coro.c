@@ -7,46 +7,65 @@
 #include <fcntl.h>
 #include <stdbool.h>
 #include <unistd.h>
+#include <string.h>
 #include <errno.h>
 
-void on_stdin() {
-  info("%s\n", coro_name(coro_self()));
+void fd_close(int *fdp) {
+  if(fdp && *fdp >= 0) {
+    if(close(*fdp)) {
+      warn("error while closing fd %d: %s", *fdp, strerror(errno));
+    }
+  }
+}
 
-  char buf[1024];
-  while(true) {
-    int r = read(STDIN_FILENO, buf, sizeof(buf) - 1);
+#define Managed(t, f) __attribute__((cleanup(f))) t
+
+#define ManagedFd Managed(int, fd_close)
+
+int read_async(int fd, void *buf, size_t count) {
+  int r;
+  while(count) {
+    r = read(fd, buf, count);
     if(r == -1) {
-      if(errno == EINTR) {
-        continue;
-      } else if(errno == EAGAIN) {
+      switch(errno) {
+      case EAGAIN:
         coro_yield();
+      case EINTR:
         continue;
       }
-      warn("failed to read from stdin: %s", strerror(errno));
-      loop_quit(NULL);
       break;
     } else if(r == 0) {
-      loop_quit(NULL);
       break;
     }
 
-    info("read %d bytes", r);
-    buf[r-1] = '\0';
-    info("stdin: %s", buf);
+    buf = ((char *) buf) + r;
+    count -= r;
   }
+
+  return r;
 }
 
 int main() {
   coro_init();
   loop_init();
 
-  Coro *c = coro_new("stdin-reader", CORO_ENTRY(on_stdin), 0);
+  ManagedFd fd = dup(STDIN_FILENO);
+  fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+  loop_register(NULL, fd, EPOLLIN, coro_self());
 
-  int mode = fcntl(STDIN_FILENO, F_GETFL) | O_NONBLOCK;
-  fcntl(STDIN_FILENO, F_SETFL, mode);
-  loop_register(NULL, STDIN_FILENO, EPOLLIN, c);
+  char buf[1024];
+  while(true) {
+    int n = read_async(fd, buf, sizeof(buf) - 1);
+    if(n == -1) {
+      warn("failed to read: %s", strerror(errno));
+      break;
+    } else if(n == 0) {
+      break;
+    }
 
-  loop_run(NULL);
+    buf[n - 1] = '\0';
+    printf("%s", buf);
+  }
 
   return 0;
 }

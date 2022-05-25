@@ -1,13 +1,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-#include <stdbool.h>
 #include <threads.h>
 #include <unistd.h>
 #include <sys/epoll.h>
 #include <assert.h>
 #include "loop.h"
 #include "logging.h"
+
+#define self_or_default(self) ({  \
+  typeof(self) v = (self);        \
+  v ? v : coro_default()          \
+})
 
 struct _Handler {
   int events;
@@ -36,19 +40,26 @@ typedef struct _Loop Loop;
 
 struct _Loop {
   bool quit;
+  Coro *coro;
   int pollfd;
   int num_fds;
-  Handler *handlers[128];
+  Handler *handlers[128];       // 以 fd 作為 index
   int maxevents;
   struct epoll_event events[0];
-  // 以 fd 作為 index
 };
 
 thread_local Loop *loop = NULL;
 
+static void loop_coro_run(Coro *coro) {
+  loop_run(coro_data(Loop *, coro));
+}
+
 Loop *loop_new(int maxevents) {
   Loop *self = malloc(sizeof(Loop) + sizeof(struct epoll_event) * maxevents);
   self->quit = false;
+  //self->coro = coro_create("looper", loop_coro_run);
+  self->coro = coro_create_full("looper", loop_coro_run, sizeof(Loop *), NULL);
+  coro_data(Loop *, self->coro) = self;
   self->pollfd = epoll_create1(EPOLL_CLOEXEC);
   self->num_fds = 0;
   self->maxevents = maxevents;
@@ -136,6 +147,10 @@ void loop_run(Loop *self) {
 }
 
 void loop_register(Loop *self, int fd, int events, Coro *coro) {
+  assert(coro);
+  assert(fd >= 0);
+  assert(events);
+
   self = self ? self : loop_default();
 
   struct epoll_event e = {
@@ -159,3 +174,6 @@ void loop_register(Loop *self, int fd, int events, Coro *coro) {
   ++ self->num_fds;
 }
 
+inline bool loop_is_running(Loop *self) {
+  return !(self ? self : loop_default())->quit;
+}

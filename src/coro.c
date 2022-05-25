@@ -19,10 +19,10 @@ enum CoroPrioroty {
 };
 
 /**
- * 設計為
+ * 設計目標為 O(1) 的 scheduling
  * - doubld-linked list
  * - 單向 traverse
- * - 盡可能源少 pointer 的操作量
+ * - 盡可能減少 pointer 的操作量
  *
  * - 因為有 root, `num_coros` 至少為 1, 所以 `head` 不可能是 NULL
  * - curr 指向 head
@@ -49,8 +49,10 @@ struct _Coro {
   ucontext_t ctx;
   char *name;
   CoroStatus status;
+  CoroDestroy destroy;
   Coro *prev;
   Coro *next;
+  char data[0];
 };
 
 thread_local CoroSche *sche = &(CoroSche) {
@@ -153,28 +155,45 @@ static void coro_set_head(Coro *coro) {
   sche->curr = sche->curr->next;
 }
 
-Coro *coro_new(const char *name, CoroEntry entry, int data_size) {
+static void coro_entry(Coro *coro, CoroEntry entry) {
+  entry(coro);
+
+  coro->status = CORO_STATUS_DEAD;
+
+  trace("coro %s (%p) terminated", coro_name(coro), coro);
+}
+
+Coro *coro_create_full(const char *name, CoroEntry entry, int data_size, CoroDestroy destroy) {
   assert(coro_root() != NULL);
   assert(name != NULL);
 
   Coro *self = malloc(sizeof(Coro) + data_size);
   self->name = strdup(name);
   self->status = CORO_STATUS_INIT;
+  self->destroy = destroy;
   UCTX(self)->uc_stack.ss_sp = malloc(sche->stack_size);
   UCTX(self)->uc_stack.ss_size = sche->stack_size;
   UCTX(self)->uc_link = UCTX(coro_root());
   getcontext(UCTX(self));
-  makecontext(UCTX(self), (void (*)()) entry, 0);
+  makecontext(UCTX(self), (void (*)()) coro_entry, 2, self, entry);
 
   coro_add(self);
 
+  trace("coro %s (%p) created, data=%p", name, self, &self->data[0]);
+
   return self;
+}
+
+inline Coro *coro_create(const char *name, CoroEntry entry) {
+  return coro_create_full(name, entry, 0, NULL);
 }
 
 void coro_free(Coro *self) {
   assert(self);
   assert(self != coro_head());
   assert(self->status == CORO_STATUS_INIT || self->status == CORO_STATUS_DEAD);
+
+  trace("coro %s (%p) freed", coro_name(self), self);
 
   free(self->name);
   free(self->ctx.uc_stack.ss_sp);
@@ -204,7 +223,7 @@ void coro_switch(Coro *target) {
 
   Coro *self = coro_head();
 
-  debug("%s>%s", self->name, target->name);
+  trace("%s>%s", self->name, target->name);
 
   coro_set_head(target);
   target->status = CORO_STATUS_STARTED;
@@ -213,18 +232,36 @@ void coro_switch(Coro *target) {
     return;
   }
 
-  debug("%s<", self->name);
+  trace("%s<", self->name);
   coro_set_head(self);
 }
 
-void coro_sche() {
-  if(sche->num_coros == 1 && coro_self() == coro_root()) {
-    return;
+bool coro_sche() {
+  if(sche->num_coros == 1) {
+    return false;
   }
 
   coro_switch(sche->curr->next);
+
+  return true;
 }
 
-void coro_yield() {
-  coro_sche();
+inline bool coro_yield() {
+  return coro_sche();
+}
+
+inline void *_coro_data(Coro *coro) {
+  return &coro->data[0];
+}
+
+inline void coro_join(Coro *coro) {
+  assert(coro);
+
+  while(coro_status(coro) != CORO_STATUS_DEAD) {
+    coro_switch(coro);
+  }
+}
+
+inline void coro_join_all() {
+  while(coro_yield());
 }

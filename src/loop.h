@@ -1,5 +1,6 @@
 #include "coro.h"
 #include <sys/epoll.h>
+#include <stdbool.h>
 
 #ifndef __LOOP_H_
 #define __LOOP_H_
@@ -21,6 +22,8 @@ void loop_init();
 Loop *loop_default();
 
 void loop_quit(Loop *self);
+
+bool loop_is_running(Loop *self);
 
 void loop_dispatch(Loop *self, struct epoll_event *event);
 
