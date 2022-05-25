@@ -8,7 +8,14 @@
 #include "logging.h"
 #include "coro.h"
 
-#define STACK_SIZE (4096)
+#if HAS_VALGRIND
+#include <valgrind.h>
+#else
+#define RUNNING_ON_VALGRIND (0)
+#define VALGRIND_STACK_REGISTER(a, b)
+#define VALGRIND_STACK_DEREGISTER(a, b)
+#endif
+
 #define CORO(p) ((Coro *)(p))
 #define UCTX(p) ((struct ucontext_t *)(p))
 
@@ -56,7 +63,7 @@ struct _Coro {
 };
 
 thread_local CoroSche *sche = &(CoroSche) {
-  .stack_size = STACK_SIZE,
+  .stack_size = DEFAULT_STACK_SIZE,
   .root = &(Coro) {
     .name = "root",
     .status = CORO_STATUS_INIT,
@@ -65,10 +72,14 @@ thread_local CoroSche *sche = &(CoroSche) {
   .curr = NULL,
 };
 
-void coro_set_default_stack_size(int stack_size) {
-  assert(stack_size >= STACK_SIZE);
+inline void coro_set_default_stack_size(int stack_size) {
+  assert(stack_size >= DEFAULT_STACK_SIZE);
 
   sche->stack_size = stack_size;
+}
+
+inline int coro_default_stack_size() {
+  return sche->stack_size;
 }
 
 static inline Coro *coro_head() {
@@ -163,7 +174,11 @@ static void coro_entry(Coro *coro, CoroEntry entry) {
   trace("coro %s (%p) terminated", coro_name(coro), coro);
 }
 
-Coro *coro_create_full(const char *name, CoroEntry entry, int data_size, CoroDestroy destroy) {
+Coro *coro_create_full(const char *name,
+                       CoroEntry entry,
+                       int stack_size,
+                       int data_size,
+                       CoroDestroy destroy) {
   assert(coro_root() != NULL);
   assert(name != NULL);
 
@@ -171,11 +186,15 @@ Coro *coro_create_full(const char *name, CoroEntry entry, int data_size, CoroDes
   self->name = strdup(name);
   self->status = CORO_STATUS_INIT;
   self->destroy = destroy;
-  UCTX(self)->uc_stack.ss_sp = malloc(sche->stack_size);
-  UCTX(self)->uc_stack.ss_size = sche->stack_size;
+  UCTX(self)->uc_stack.ss_sp = malloc(stack_size);
+  UCTX(self)->uc_stack.ss_size = stack_size;
   UCTX(self)->uc_link = UCTX(coro_root());
   getcontext(UCTX(self));
   makecontext(UCTX(self), (void (*)()) coro_entry, 2, self, entry);
+
+  if(RUNNING_ON_VALGRIND) {
+    VALGRIND_STACK_REGISTER(UCTX(self)->uc_stack.ss_sp, UCTX(self)->uc_stack.ss_sp + stack_size);
+  }
 
   coro_add(self);
 
@@ -185,7 +204,7 @@ Coro *coro_create_full(const char *name, CoroEntry entry, int data_size, CoroDes
 }
 
 inline Coro *coro_create(const char *name, CoroEntry entry) {
-  return coro_create_full(name, entry, 0, NULL);
+  return coro_create_full(name, entry, sche->stack_size, 0, NULL);
 }
 
 void coro_free(Coro *self) {

@@ -3,6 +3,8 @@
 #ifndef _CORO_H_
 #define _CORO_H_
 
+#define DEFAULT_STACK_SIZE (4096)
+
 #define coro_data(t, c) (*(t *) _coro_data(c))
 
 #define CORO_ENTRY(p) ((CoroEntry)(p))
@@ -33,7 +35,11 @@ CoroStatus coro_status(Coro *coro);
 
 Coro *coro_create(const char *name, CoroEntry entry);
 
-Coro *coro_create_full(const char *name, CoroEntry entry, int data_size, CoroDestroy destroy);
+Coro *coro_create_full(const char *name,
+                       CoroEntry entry,
+                       int stack_size,
+                       int data_size,
+                       CoroDestroy destroy);
 
 void coro_free(Coro *self);
 
@@ -48,6 +54,8 @@ bool coro_yield();
 void coro_start(Coro *self, CoroEntry entry);
 
 void coro_set_default_stack_size(int stack_size);
+
+int coro_default_stack_size();
 
 void *_coro_data(Coro *self);
 

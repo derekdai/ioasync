@@ -10,7 +10,9 @@
 #include <string.h>
 #include <errno.h>
 
-void fd_close(int *fdp) {
+typedef int Fd;
+
+void fd_close(Fd *fdp) {
   if(fdp && *fdp >= 0) {
     if(close(*fdp)) {
       warn("error while closing fd %d: %s", *fdp, strerror(errno));
@@ -20,12 +22,35 @@ void fd_close(int *fdp) {
 
 #define Managed(t, f) __attribute__((cleanup(f))) t
 
-#define ManagedFd Managed(int, fd_close)
+#define FdVar Managed(Fd, fd_close)
 
-int read_async(int fd, void *buf, size_t count) {
+int read_async(Fd fd, void *buf, size_t count) {
   int r;
   while(count) {
     r = read(fd, buf, count);
+    if(r == -1) {
+      switch(errno) {
+      case EAGAIN:
+        coro_yield();
+      case EINTR:
+        continue;
+      }
+      break;
+    } else if(r == 0) {
+      break;
+    }
+
+    buf = ((char *) buf) + r;
+    count -= r;
+  }
+
+  return r;
+}
+
+int write_async(Fd fd, const void *buf, size_t count) {
+  int r;
+  while(count) {
+    r = write(fd, buf, count);
     if(r == -1) {
       switch(errno) {
       case EAGAIN:
@@ -49,7 +74,7 @@ int main() {
   coro_init();
   loop_init();
 
-  ManagedFd fd = dup(STDIN_FILENO);
+  FdVar fd = dup(STDIN_FILENO);
   fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
   loop_register(NULL, fd, EPOLLIN, coro_self());
 

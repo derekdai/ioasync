@@ -58,7 +58,11 @@ Loop *loop_new(int maxevents) {
   Loop *self = malloc(sizeof(Loop) + sizeof(struct epoll_event) * maxevents);
   self->quit = false;
   //self->coro = coro_create("looper", loop_coro_run);
-  self->coro = coro_create_full("looper", loop_coro_run, sizeof(Loop *), NULL);
+  self->coro = coro_create_full("looper",
+                                loop_coro_run,
+                                coro_default_stack_size(),
+                                sizeof(Loop *),
+                                NULL);
   coro_data(Loop *, self->coro) = self;
   self->pollfd = epoll_create1(EPOLL_CLOEXEC);
   self->num_fds = 0;
