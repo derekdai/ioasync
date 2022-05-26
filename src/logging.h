@@ -21,7 +21,7 @@
 #define ERROR_STYLE "\e[91mE\e[90m"
 #define FATAL_STYLE "\e[93;41mF\e[90m"
 
-#define log(prx, fmt, sfx, ...) printf(prx " %s:%d %s() " fmt sfx "\n", __FILE__, __LINE__, __func__, __VA_ARGS__)
+#define log(prx, fmt, sfx, ...) printf(prx " %s:%d %s() " fmt sfx "\n", __BASE_FILE__, __LINE__, __func__, __VA_ARGS__)
 
 #if LOG_LEVEL >= TRACE
 #define trace(fmt, ...) log(TRACE_STYLE, fmt, "\e[0m", __VA_ARGS__)
