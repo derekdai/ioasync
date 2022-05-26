@@ -7,26 +7,23 @@
 #include <assert.h>
 #include "loop.h"
 #include "logging.h"
+#include "dlist.h"
+#include "utils.h"
 
-#define self_or_default(self) ({  \
-  typeof(self) v = (self);        \
-  v ? v : coro_default()          \
-})
+typedef struct _Handler Handler;
 
 struct _Handler {
+  DList list;
   int events;
   Coro *coro;
-  Handler *prev;
-  Handler *next;
 };
 
 Handler *handler_new(int events, Coro *coro) {
   Handler *self = malloc(sizeof(Handler));
   *self = (Handler) {
+    .list = DLIST_INIT,
     .events = events,
     .coro = coro,
-    .prev = NULL,
-    .next = NULL,
   };
 
   return self;
@@ -39,9 +36,9 @@ void handler_free(Handler *self) {
 typedef struct _Loop Loop;
 
 struct _Loop {
-  bool quit;
-  Coro *coro;
   int pollfd;
+  Coro *coro;
+  bool quit;
   int num_fds;
   Handler *handlers[128];       // 以 fd 作為 index
   int maxevents;
@@ -52,6 +49,11 @@ thread_local Loop *loop = NULL;
 
 static void loop_coro_run(Coro *coro) {
   loop_run(coro_data(Loop *, coro));
+}
+
+inline Fd loop_fd(Loop *self) {
+  assert(self);
+  return self->pollfd;
 }
 
 Loop *loop_new(int maxevents) {
@@ -79,12 +81,7 @@ void loop_free(Loop * self) {
 
   int i;
   for(i = 0; i < 128; ++ i) {
-    Handler *h = self->handlers[i];
-    while(h) {
-      Handler *n = h->next;
-      handler_free(h);
-      h = n;
-    }
+    dlist_free_all(self->handlers[i], handler_free);
   }
 
   close(self->pollfd);
@@ -104,6 +101,10 @@ void loop_init() {
   atexit(loop_deinit);
 }
 
+static inline Loop *self_or_default(Loop *self) {
+  return self ? self : loop_default();
+}
+
 Loop *loop_default() {
   assert(loop != NULL);
 
@@ -111,24 +112,30 @@ Loop *loop_default() {
 }
 
 void loop_quit(Loop *self) {
-  self = self ? self : loop_default();
-  self->quit = 1;
+  self_or_default(self)->quit = 1;
+}
+
+static inline bool loop_registered(Loop *self, Fd fd) {
+  return self->handlers[fd] != NULL;
+}
+
+static bool dispatch(Handler *h, struct epoll_event *event) {
+  if(!(event->events & (h->events | EPOLLERR))) {
+    return true;
+  }
+  coro_switch(h->coro);
+
+  return false;
 }
 
 void loop_dispatch(Loop *self, struct epoll_event *event) {
-  Handler *h = self->handlers[event->data.fd];
-  while(h) {
-    if(!(event->events & (h->events | EPOLLERR))) {
-      continue;
-    }
-    coro_switch(h->coro);
+  assert(loop_registered(self, event->data.fd));
 
-    h = h->next;
-  }
+  dlist_foreach(self->handlers[event->data.fd], dispatch, event);
 }
 
 void loop_run(Loop *self) {
-  self = self ? self : loop_default();
+  self = self_or_default(self);
 
   while(!self->quit && self->num_fds > 0) {
     int r = epoll_wait(self->pollfd, self->events, self->maxevents, -1);
@@ -141,7 +148,7 @@ void loop_run(Loop *self) {
       break;
     }
 
-    debug("%d events", r);
+    trace("%d events", r);
 
     int i;
     for(i = 0; i < r; ++ i) {
@@ -150,34 +157,97 @@ void loop_run(Loop *self) {
   }
 }
 
-void loop_register(Loop *self, int fd, int events, Coro *coro) {
+static bool or_events(Handler *h, int *result) {
+  *result |= h->events;
+  return true;
+}
+
+static inline int calc_events(Handler *h) {
+  int events = 0;
+  dlist_foreach(h, or_events, &events);
+
+  return events;
+}
+
+int loop_register(Loop *self, Fd fd, int events, Coro *coro) {
   assert(coro);
-  assert(fd >= 0);
-  assert(events);
+  assert(fd_check(fd));
+  assert(events != 0);
 
-  self = self ? self : loop_default();
+  self = self_or_default(self);
 
-  struct epoll_event e = {
+  int old_events = calc_events(self->handlers[fd]);
+  int op = !old_events ? EPOLL_CTL_ADD : EPOLL_CTL_MOD;
+  if((old_events | events) ^ old_events) {
+    ccall(epoll_ctl, self->pollfd, op, fd, &(struct epoll_event) {
+      .events = old_events | events,
+      .data.fd = fd,
+    });
+  }
+
+  if(!self->handlers[fd]) {
+    ++ self->num_fds;
+  }
+
+  dlist_prepend(handler_new(events, coro), self->handlers[fd]);
+
+  return 0;
+}
+
+bool comp_handler(Handler *node, void *data) {
+  struct Ctx {
+    Handler *handler;
+    int events;
+    Coro *coro;
+  } *ctx = data;
+
+  if(ctx->events == node->events && ctx->coro == node->coro) {
+    ctx->handler = node;
+  }
+  return !ctx->handler;
+}
+
+int loop_unregister(Loop *self, Fd fd, int events, Coro *coro) {
+  assert(coro);
+  assert(fd_check(fd));
+  assert(events != 0);
+
+  self = self_or_default(self);
+
+  struct Ctx {
+    Handler *handler;
+    int events;
+    Coro *coro;
+  } ctx = {
+    .handler = NULL,
     .events = events,
-    .data.fd = fd,
+    .coro = coro,
   };
+  dlist_foreach(self->handlers[fd], comp_handler, &ctx);
 
-  int r = epoll_ctl(self->pollfd, EPOLL_CTL_ADD, fd, &e);
-  if(r == -1) {
-    warn("failed to register fd (%d): %s", fd, strerror(errno));
-    return;
+  if(!ctx.handler) {
+    return 0;
   }
 
-  Handler *h = handler_new(events, coro);
-  h->next = self->handlers[fd];
-  if(self->handlers[fd]) {
-    self->handlers[fd]->prev = h;
+  dlist_remove(ctx.handler);
+  if(self->handlers[fd] == ctx.handler) {
+    self->handlers[fd] = dlist_next(Handler, ctx.handler);
   }
-  self->handlers[fd] = h;
 
-  ++ self->num_fds;
+  int new_events = calc_events(self->handlers[fd]);
+  int op = !new_events ? EPOLL_CTL_DEL : EPOLL_CTL_MOD;
+  if((new_events | events) ^ new_events) {
+    ccall(epoll_ctl, self->pollfd, op, fd, &(struct epoll_event) {
+      .events = new_events | events,
+      .data.fd = fd,
+    });
+  }
+
+  handler_free(ctx.handler);
+
+  return 0;
 }
 
 inline bool loop_is_running(Loop *self) {
-  return !(self ? self : loop_default())->quit;
+  return !self_or_default(self)->quit;
 }

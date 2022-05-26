@@ -3,10 +3,15 @@
 void _dlist_remove(DList *self) {
   if(!self) { return; }
 
-  if(self->prev) {
+  if(self->prev == self) {
+    self->prev = NULL;
+  } else if(self->prev) {
     self->prev->next = self->next;
   }
-  if(self->next) {
+
+  if(self->next == self) {
+    self->next = NULL;
+  } else if(self->next) {
     self->next->prev = self->prev;
   }
 }

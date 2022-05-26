@@ -9,7 +9,8 @@
 
 typedef struct _DList DList;
 
-typedef void (*DListIter)(DList *node);
+typedef bool (*DListIter)(DList *node, void *data);
+typedef bool (*DListComp)(DList *n1, void *data);
 typedef void (*DListFree)(DList *node);
 
 struct _DList {
@@ -60,23 +61,32 @@ static inline void _dlist_free(DList *self, DListFree func) {
   func(self);
 }
 
-#define dlist_foreach(head, func) _dlist_foreach((DList *) (head), (DListIter)(func))
+#define dlist_foreach(head, func, data) _dlist_foreach((DList *) (head), \
+                                                       (DListIter)(func), \
+                                                       (void *) (data))
 
-static inline void _dlist_foreach(DList *head, DListIter func) {
+static inline void _dlist_foreach(DList *head, DListIter func, void *data) {
   if(!head) { return; }
 
   DList *node = head;
   do {
     DList *next = node->next;
-    func(node);
+    if(!func(node, data)) {
+      break;
+    }
     node = next;
   } while(node && node != head);
 }
 
 #define dlist_free_all(head, func) _dlist_free_all((DList *) (head), (DListFree)(func))
 
+static bool free_node(DList *node, DListFree func) {
+  func(node);
+  return true;
+}
+
 static inline void _dlist_free_all(DList *head, DListFree func) {
-  dlist_foreach(head, func);
+  dlist_foreach(head, free_node, func);
 }
 
 #endif /* __DLIST_H_ */
