@@ -38,7 +38,7 @@ static inline Fd fd_from_native(int fd) {
 
 int fd_read(Fd fd, void *buf, size_t count) {
   int r;
-  while(count) {
+  do {
     r = read(fd, buf, count);
     if(r == -1) {
       switch(errno) {
@@ -50,13 +50,28 @@ int fd_read(Fd fd, void *buf, size_t count) {
         continue;
       }
       break;
-    } else if(r == 0) {
+    }
+  } while(r < 0);
+
+  return r;
+}
+
+int fd_write(Fd fd, void *buf, size_t count) {
+  int r;
+  do {
+    r = write(fd, buf, count);
+    if(r == -1) {
+      switch(errno) {
+      case EAGAIN:
+        loop_register(NULL, fd, EPOLLOUT, coro_self());
+        coro_yield();
+        loop_unregister(NULL, fd, EPOLLOUT, coro_self());
+      case EINTR:
+        continue;
+      }
       break;
     }
-
-    buf = ((char *) buf) + r;
-    count -= r;
-  }
+  } while(r < 0);
 
   return r;
 }
@@ -65,11 +80,12 @@ int main() {
   coro_init();
   loop_init();
 
-  FdVar fd = ccall(fd_from_native, ccall(dup, STDIN_FILENO));
+  FdVar fd0 = ccall(fd_from_native, ccall(dup, STDIN_FILENO));
+  FdVar fd1 = ccall(fd_from_native, ccall(dup, STDOUT_FILENO));
 
-  char buf[3];
+  char buf[1024];
   while(true) {
-    int n = fd_read(fd, buf, sizeof(buf) - 1);
+    int n = fd_read(fd0, buf, sizeof(buf) - 1);
     if(n == -1) {
       warn("failed to read: %s", strerror(errno));
       break;
@@ -77,8 +93,9 @@ int main() {
       break;
     }
 
-    buf[n - 1] = '\0';
-    info("%s", buf);
+    fd_write(fd1, ">", 1);
+    buf[n - 1] = '\n';
+    fd_write(fd1, buf, n);
   }
 
   return 0;
