@@ -1,5 +1,5 @@
-#include "../src/dlist.h"
-#include "../src/utils.h"
+#include "dlist.h"
+#include "utils.h"
 #include <stdlib.h>
 #include <assert.h>
 #include <stdio.h>

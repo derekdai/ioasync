@@ -1,2 +1,3 @@
-test-coro
 perf.data*
+.cache/
+.vscode*
